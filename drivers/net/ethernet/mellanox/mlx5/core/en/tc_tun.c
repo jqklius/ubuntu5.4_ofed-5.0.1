@@ -522,7 +522,7 @@ int mlx5e_tc_tun_parse(struct net_device *filter_dev,
 #endif
 		       )
 {
-	struct mlx5e_tc_tunnel *tunnel = mlx5e_get_tc_tun(filter_dev);
+	struct mlx5e_tc_tunnel *tunnel = &vxlan_tunnel;
 	int err = 0;
 
 	if (!tunnel) {

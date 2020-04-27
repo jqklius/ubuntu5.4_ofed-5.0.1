@@ -100,6 +100,8 @@
 #define PRIO_CHAIN_SUPPORT 1
 #endif
 
+#define PRIO_CHAIN_SUPPORT 1
+
 #if defined(HAVE_TC_FLOWER_OFFLOAD) && \
     !defined(HAVE_SWITCHDEV_PORT_SAME_PARENT_ID)
 #include <net/bonding.h>
@@ -1377,6 +1379,21 @@ static void mlx5e_tc_del_fdb_flow(struct mlx5e_priv *priv,
 
 #if defined(HAVE_TCF_PEDIT_TCFP_KEYS_EX) && defined(HAVE_TCF_TUNNEL_INFO)
 	if (attr->parse_attr) {
+
+#ifdef HAVE_TC_SETUP_FLOW_ACTION
+        int out_index = 0;
+        if(attr->parse_attr && attr->parse_attr->tun_info) {
+                for (out_index = 0; out_index < MLX5_MAX_FLOW_FWD_VPORTS; out_index++){
+                        if (attr->dests[out_index].flags & MLX5_ESW_DEST_ENCAP) {
+                                if(attr->parse_attr->tun_info[out_index]){
+                                        kfree(attr->parse_attr->tun_info[out_index]);
+                                        attr->parse_attr->tun_info[out_index] = NULL;
+                                }
+                        }
+                }
+        }
+#endif
+
 		kfree(attr->parse_attr->mod_hdr_actions);
 		kvfree(attr->parse_attr);
 	}
@@ -1988,6 +2005,7 @@ static int __parse_cls_flower(struct mlx5e_priv *priv,
 	      BIT(FLOW_DISSECTOR_KEY_TCP) |
 	      BIT(FLOW_DISSECTOR_KEY_IP)  |
 #endif
+          BIT(FLOW_DISSECTOR_KEY_CT)  |
 #ifdef HAVE_FLOW_DISSECTOR_KEY_IP
 	      BIT(FLOW_DISSECTOR_KEY_IP)  |
 #endif
@@ -2392,8 +2410,8 @@ static bool is_valid_ct_state(struct mlx5e_priv *priv,
 		goto err;
 
 	/* +inv */
-	if (ct_state & TCA_FLOWER_KEY_CT_FLAGS_INVALID)
-		goto err;
+	//if (ct_state & TCA_FLOWER_KEY_CT_FLAGS_INVALID)
+	//	goto err;
 
 	/* +rel */
 	if (ct_state & TCA_FLOWER_KEY_CT_FLAGS_RELATED)
@@ -2981,6 +2999,7 @@ static bool modify_header_match_supported(struct mlx5_flow_spec *spec,
 		}
 	}
 
+#if 0
 	ip_proto = MLX5_GET(fte_match_set_lyr_2_4, headers_v, ip_protocol);
 	if (modify_ip_header && ip_proto != IPPROTO_TCP &&
 	    ip_proto != IPPROTO_UDP && ip_proto != IPPROTO_ICMP) {
@@ -2991,6 +3010,7 @@ static bool modify_header_match_supported(struct mlx5_flow_spec *spec,
 		pr_info("can't offload re-write of ip proto %d\n", ip_proto);
 		return false;
 	}
+#endif
 
 out_ok:
 	return true;
@@ -3572,6 +3592,16 @@ static bool is_duplicated_output_device(struct net_device *dev,
 	return false;
 }
 
+#ifdef HAVE_TC_SETUP_FLOW_ACTION
+
+struct ip_tunnel_info *dup_tun_info(const struct ip_tunnel_info *tun_info)
+{
+	size_t tun_size = sizeof(*tun_info) + tun_info->options_len;
+
+	return kmemdup(tun_info, tun_size, GFP_KERNEL);
+}
+#endif
+
 static int parse_tc_fdb_actions(struct mlx5e_priv *priv,
 				struct flow_action *flow_action,
 				struct mlx5e_tc_flow *flow,
@@ -3659,7 +3689,15 @@ static int parse_tc_fdb_actions(struct mlx5e_priv *priv,
 #ifdef HAVE_TCF_TUNNEL_INFO
 				parse_attr->mirred_ifindex[attr->out_count] =
 					out_dev->ifindex;
-				parse_attr->tun_info[attr->out_count] = info;
+
+#ifndef HAVE_TC_SETUP_FLOW_ACTION
+                                parse_attr->tun_info[attr->out_count] = info;
+#else
+                                if(info){
+                                        parse_attr->tun_info[attr->out_count] = dup_tun_info(info);
+                                }
+#endif
+
 				encap = false;
 				attr->dests[attr->out_count].flags |=
 					MLX5_ESW_DEST_ENCAP;

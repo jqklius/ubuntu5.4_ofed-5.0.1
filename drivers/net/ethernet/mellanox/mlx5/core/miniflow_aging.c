@@ -9,6 +9,7 @@
 #include <linux/rhashtable.h>
 #include <net/netfilter/nf_conntrack_core.h>
 #include <linux/netfilter/nf_conntrack_common.h>
+#include <net/netfilter/nf_conntrack_timeout.h>
 
 #include "miniflow.h"
 
@@ -99,7 +100,7 @@ err_alloc:
 
 static void flow_offload_fixup_tcp(struct ip_ct_tcp *tcp)
 {
-	tcp->state = TCP_CONNTRACK_ESTABLISHED;
+	//tcp->state = TCP_CONNTRACK_ESTABLISHED;
 	tcp->seen[0].td_maxwin = 0;
 	tcp->seen[1].td_maxwin = 0;
 }
@@ -122,17 +123,43 @@ static void flow_offload_fixup_ct_state(struct nf_conn *ct)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,20,0)
 	l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), l4num);
 #else
-	l4proto = __nf_ct_l4proto_find(l4num);
+	l4proto = nf_ct_l4proto_find(l4num);
 #endif
 	if (!l4proto)
 		return;
 
-	if (l4num == IPPROTO_TCP)
-		timeout = NF_FLOWTABLE_TCP_PICKUP_TIMEOUT;
-	else if (l4num == IPPROTO_UDP)
-		timeout = NF_FLOWTABLE_UDP_PICKUP_TIMEOUT;
-	else
-		return;
+        // no need modify ct timeout, the flow is del from hw,then left ct in kernel
+        // then if new packet come, still can find the ct
+        if(nf_ct_is_dying(ct)){
+                return;
+        }
+
+        struct net *net = nf_ct_net(ct);
+        unsigned int *timeouts;
+        timeouts = nf_ct_timeout_lookup(ct);
+
+        if (l4num == IPPROTO_TCP){
+                if (!timeouts) {
+                struct nf_tcp_net *tn = nf_tcp_pernet(net);
+                timeouts = tn->timeouts;
+                }
+                timeout = timeouts[ct->proto.tcp.state];
+        } else if (l4num == IPPROTO_UDP) {
+                if (!timeouts) {
+                struct nf_udp_net * un = nf_udp_pernet(net);
+                timeouts = un->timeouts;
+                }
+                if (test_bit(IPS_SEEN_REPLY_BIT, &ct->status)) {
+                timeout =  timeouts[UDP_CT_REPLIED];
+                } else {
+                timeout = timeouts[UDP_CT_UNREPLIED];
+                }
+        } else {
+                timeout = offloaded_ct_timeout;
+        }
+        ct->timeout = _nfct_time_stamp + timeout;
+
+        return;
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4,0,0)
 	{
@@ -147,6 +174,7 @@ static void flow_offload_fixup_ct_state(struct nf_conn *ct)
 #else
 	ct->timeout = _nfct_time_stamp + timeout;
 #endif
+
 }
 
 static void flow_offload_free(struct flow_offload *flow)

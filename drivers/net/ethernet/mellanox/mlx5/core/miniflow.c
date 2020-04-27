@@ -483,6 +483,8 @@ static int miniflow_merge_hdr(struct mlx5e_priv *priv,
 	return 0;
 }
 
+extern struct ip_tunnel_info *dup_tun_info(const struct ip_tunnel_info *tun_info);
+
 static void miniflow_merge_vxlan(struct mlx5e_tc_flow *mflow,
 				 struct mlx5e_tc_flow *flow)
 {
@@ -490,9 +492,23 @@ static void miniflow_merge_vxlan(struct mlx5e_tc_flow *mflow,
 	       flow->esw_attr->parse_attr->mirred_ifindex,
 	       sizeof(flow->esw_attr->parse_attr->mirred_ifindex));
 
-	memcpy(mflow->esw_attr->parse_attr->tun_info,
-	       flow->esw_attr->parse_attr->tun_info,
-	       sizeof(flow->esw_attr->parse_attr->tun_info));
+
+#ifndef HAVE_TC_SETUP_FLOW_ACTION
+        memcpy(mflow->esw_attr->parse_attr->tun_info,
+               flow->esw_attr->parse_attr->tun_info,
+               sizeof(flow->esw_attr->parse_attr->tun_info));
+
+#else
+        int out_index = 0;
+        struct ip_tunnel_info *info = NULL;
+        for (out_index = 0; out_index < MLX5_MAX_FLOW_FWD_VPORTS; out_index++){
+                info = flow->esw_attr->parse_attr->tun_info[out_index];
+                if(info){
+                        mflow->esw_attr->parse_attr->tun_info[out_index] = dup_tun_info(info);
+                }
+        }
+#endif
+
 }
 
 static u8 mlx5e_etype_to_ipv(u16 ethertype)
@@ -961,7 +977,9 @@ err_rcu:
 static bool miniflow_is_peer_flow_needed(struct mlx5e_tc_flow *flow)
 {
 	struct mlx5_esw_flow_attr *attr = flow->esw_attr;
-
+        if(mlx5_lag_is_multipath(attr->in_mdev)){
+                return true;
+        }
 	return mlx5_lag_is_sriov(attr->in_mdev);
 }
 

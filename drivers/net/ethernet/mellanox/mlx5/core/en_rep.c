@@ -718,10 +718,14 @@ static int mlx5e_rep_indr_setup_block_cb(enum tc_setup_type type,
 					 void *type_data, void *indr_priv)
 {
 	struct mlx5e_rep_indr_block_priv *priv = indr_priv;
-
+        struct mlx5e_priv *dev_priv = netdev_priv(priv->rpriv->netdev);
 	switch (type) {
 	case TC_SETUP_CLSFLOWER:
 		return mlx5e_rep_indr_offload(priv->netdev, type_data, priv);
+        case TC_SETUP_MINIFLOW:
+            return miniflow_configure(dev_priv, type_data);
+        case TC_SETUP_CT:
+            return miniflow_configure_ct(dev_priv, type_data);
 	default:
 		return -EOPNOTSUPP;
 	}
